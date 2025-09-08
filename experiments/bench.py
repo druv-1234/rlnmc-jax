@@ -307,7 +307,7 @@ def bench_sa(Jh_list: List[Jhdata], # stacked instances
 																jnp.full((K_ALL,), approximation),
 																jax.random.key(0),
 																jnp.array(config["PERCENTILES"]), 
-																config["BOOTSTRAP"])
+																config["METRIC_BOOTSTRAP"])
 		all_tts_results.append(tts_results)
 
 		successes = {}
@@ -717,7 +717,7 @@ def make_bench_nmc(Jh_list: List[Jhdata],
 																	jnp.full((K_ALL,), approximation),
 																	jax.random.key(0),
 																	jnp.array(config["PERCENTILES"]), 
-																	config["BOOTSTRAP"])
+																	config["METRIC_BOOTSTRAP"])
 
 			all_tts_results.append(tts_results)
 
@@ -865,14 +865,6 @@ def make_bench_nmc(Jh_list: List[Jhdata],
 				pass
 		
 		bench_results = runner_state, all_log_info, all_tts_results, all_other
-
-		#here to save the stats
-		if config["SAVE_ALL_DATA"]:
-			#save the benchmarking statistics						
-			with open(os.path.join(config["LOG"]["PATH"], 
-														 config["LOG"]["PROJECT_NAME"],
-														 config["LOG"]["NAME"] + ".pkl"), 'wb') as f:
-				pickle.dump(bench_results, f)
 
 		return bench_results
 
