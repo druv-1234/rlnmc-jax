@@ -9,7 +9,7 @@
 	"energy_scaler": 10.0,
 
 	"SA": {
-		"total_sweeps": 50000,
+		"TOTAL_SWEEPS": 50000,
 		"T_init": 0.333,
 		"T_final": 0.125
 	},

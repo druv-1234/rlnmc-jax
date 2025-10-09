@@ -5,7 +5,7 @@
 	"dtype": "float",
 	"track_stats": true,
 	
-	"instances": [65, 384], 
+	"instances": [65, 66], 
 
 	"bench": 
 	{

@@ -32,6 +32,7 @@ from problems.readers import *
 def bench_sa(Jh_list: List[Jhdata], # stacked instances
 						 gs_list: Union[List[jax.Array], None],
 						 approximation: float,
+						 sa_config: dict,
 						 names: List[str], prefix: str,
 						 key: jax.Array,
 						 track_stats: bool,
@@ -121,13 +122,13 @@ def bench_sa(Jh_list: List[Jhdata], # stacked instances
 	best_s_reset = sminskey.min_s
 
 	def sa_schedule(count):
-		frac = count/config["SA"]["TOTAL_SWEEPS"]
+		frac = count/sa_config["TOTAL_SWEEPS"]
 		return frac
 	
 	assert config["NUM_LOG_STEPS"] > 0
 	
-	beta_init  = 1.0/config["SA"]["T_init"]
-	beta_final = 1.0/config["SA"]["T_final"]
+	beta_init  = 1.0/sa_config["T_init"]
+	beta_final = 1.0/sa_config["T_final"]
 	betaf = beta_init
 
 	if track_diversity:
@@ -137,7 +138,7 @@ def bench_sa(Jh_list: List[Jhdata], # stacked instances
 			for _ in range(K_ALL):
 				set_of_solutions_pr.append([set() for _ in range(NUM_REPLICAS)])
 
-	NUM_SWEEPS_PER_LOG = config["SA"]["TOTAL_SWEEPS"]//config["NUM_LOG_STEPS"]
+	NUM_SWEEPS_PER_LOG = sa_config["TOTAL_SWEEPS"]//config["NUM_LOG_STEPS"]
 	
 	all_log_info = []
 	all_tts_results = []
@@ -1047,13 +1048,14 @@ if __name__ == "__main__":
 			bench_sa(Jh_list, 
 							 gs_list,
 							 class_config["approximation"],
+							 class_config["SA"],
 							 [str(i) for i in instance_ids], "bench", 
 							 key, 
 							 True, 
 							 pmode_idx, 
 							 config["bench"], 
 							 devices = jax.devices()[:config["bench"]["NUM_DEVICES"]], 
-							 succ_folder_name = args.suc_name)
+							 succ_folder_name = config["bench"]["LOG"]["NAME"])
 		pass
 
 	else:
