@@ -23,24 +23,28 @@ from modules.nmc_types import *
 def init_factor_graph(J: Union[List[Jsp], List[jax.Array]],
 											h: jax.Array, 
 											lbp_beta: float,
-											pmode_idx: int = 0) -> fgraph.FactorGraph:
+											problem_mode: str = "wcnf") -> fgraph.FactorGraph:
 	N = h.size
 
 	variables = vgroup.NDVarArray(num_states = 2, shape = (N,)) 
 	factor_graph = fgraph.FactorGraph(variable_groups = variables)
 
-	if pmode_idx == 0: #pubo biases
-		h_potentials = np.stack([h, np.zeros_like(h)], axis = 1).astype(np.float32)*lbp_beta # E = -b_ix_i
+	if problem_mode == "pubo": #pubo biases
+		h_potentials = np.stack([h, np.zeros_like(h)], 
+														axis = 1).astype(np.float32)*lbp_beta # E = -h_ix_i, p ~ exp(h_ix_i)
 
-	elif pmode_idx == 1: #pising magnetic fields
-		h_potentials = np.stack([h, -h], axis = 1).astype(np.float32)*lbp_beta # E = -h_is_i
+	elif problem_mode == "pising": #pising magnetic fields
+		h_potentials = np.stack([h, -h], 
+														axis = 1).astype(np.float32)*lbp_beta # E = -h_is_i, p ~ exp(h_ix_i)
 
 	else: #cnf weighted single clauses
-		h_potentials = np.stack([h, np.zeros_like(h)], axis = 1).astype(np.float32)*lbp_beta # E = w_ix_i (h < 0) or w_i(1-x_i)~-w_ix_i (h > 0)
+		h_potentials = np.stack([-jnp.abs(h)*jnp.signbit(h), 
+													 	 -jnp.abs(h)*jnp.logical_not(jnp.signbit(h))], 
+														 axis = 1).astype(np.float32)*lbp_beta # E = h_ix_i, p ~ exp(-h_ix_i)
 
 	h_factors = fgroup.EnumFactorGroup(
-    variables_for_factors = [[variables[i]] for i in range(N)],
-    factor_configs = (np.array([1, 0]))[:, None],
+    variables_for_factors = [[variables[i]] for i in range(N)],  #type: ignore
+    factor_configs = np.array([1, 0])[:, None],
     log_potentials = h_potentials
 	)
 
@@ -54,25 +58,25 @@ def init_factor_graph(J: Union[List[Jsp], List[jax.Array]],
 			data = jnp.full((indices.shape[0],), 1.0)
 
 		k = indices.shape[1]
-		if pmode_idx in [0, 1]:
+		if problem_mode in ["pubo", "pising"]:
 			variables_for_factors = [[variables[i] for i in idx] for idx in indices]
-		else:
-			#in cnf indexing in clauses is with a sign and starts from 1
-			variables_for_factors = [[variables[np.abs(i)-1] for i in idx] for idx in indices]
-
-		factor_configs = np.array(list(itertools.product([1, 0], repeat = k)))
-		if pmode_idx == 0:
-			log_potentials = data[:, None]*np.prod(factor_configs, axis=1).astype(np.float32)*lbp_beta
-
-		elif pmode_idx == 1:
-			s_configs = np.array(list(itertools.product([1, -1], repeat = k)))
-			log_potentials = data[:, None]*np.prod(s_configs, axis=1).astype(np.float32)*lbp_beta
-
 		else:
 			#sort indices in each clause for possible duplicates removal
 			sort_ind = np.argsort(np.abs(indices), axis = 1)
 			indices = jnp.take_along_axis(indices, sort_ind, axis = 1)
 
+			#in cnf indexing in clauses is with a sign and starts from 1
+			variables_for_factors = [[variables[np.abs(i)-1] for i in idx] for idx in indices]
+
+		factor_configs = np.array(list(itertools.product([1, 0], repeat = k)))
+		if problem_mode == "pubo":
+			log_potentials = data[:, None]*np.prod(factor_configs, axis=1).astype(np.float32)*lbp_beta
+
+		elif problem_mode == "pising":
+			s_configs = np.array(list(itertools.product([1, -1], repeat = k)))
+			log_potentials = data[:, None]*np.prod(s_configs, axis = 1).astype(np.float32)*lbp_beta
+
+		else:
 			s_configs = np.array(list(itertools.product([1, -1], repeat = k)))
 			clause_evaluations = np.prod(indices[:, None, :]*s_configs > 0, axis=2).astype(np.float32)
 			log_potentials = -data[:, None]*clause_evaluations*lbp_beta
@@ -92,19 +96,20 @@ def init_factor_graph(J: Union[List[Jsp], List[jax.Array]],
 					)
 					log_potentials = np.stack([x for i, x in enumerate(log_potentials) if i not in where_duplicates] + [log_potential_sum])
 		
-		J_factors.append(fgroup.EnumFactorGroup(variables_for_factors, factor_configs, log_potentials))
+		J_factors.append(fgroup.EnumFactorGroup(variables_for_factors, factor_configs, log_potentials))  #type: ignore
 
 	factor_graph.add_factors([h_factors] + J_factors)
 
 	return factor_graph
 
-@partial(jax.jit, static_argnames=['bp', 'FGvars', 'num_iters'])
+@partial(jax.jit, static_argnames=['bp', 'FGvars', 'num_iters', 'problem_mode'])
 def surrogate_LBP(bp,
 									FGvars,
 									s: jax.Array, 
 									epsilon: jax.Array,
-									lbp_beta: float,
+									lbp_beta: jax.Array,
 									num_iters: int,
+									problem_mode: str,
 									tolerance_m: float,
 									tolerance_d: float,
 									lambdas: jax.Array) ->  Tuple[jax.Array, Dict]:
@@ -115,6 +120,7 @@ def surrogate_LBP(bp,
 		s (jax.Array): current state of the problem
 		epsilon (jax.Array): A scaling factor for every spin to account for different interactions
 		lbp_beta (float): temperature of lbp
+		num_iters (int): pgmax lbp number of iterations
 		num_iters (int): pgmax lbp number of iterations
 		tolerance_m (float): a maximum allowed bp relative diff of messages to stop
 		tolerance_d (float): a maximum allowed distance from the initial state to stop
@@ -128,19 +134,22 @@ def surrogate_LBP(bp,
 	def map_s_distance(m, s):
 		return (m != s.astype(int)).sum()/s.size
 	
-	evidence_0 = (jnp.stack([1-2*s, 2*s-1], axis=1)*epsilon[:, None]).astype(jnp.float32)*lbp_beta
+	if problem_mode in ["pubo", "pising"]:
+		evidence_0 = (jnp.stack([1-2*s, 2*s-1], axis = 1)*epsilon[:, None]).astype(jnp.float32)*lbp_beta
+	else:
+		evidence_0 = (jnp.stack([-1*s, s-1], axis = 1)*epsilon[:, None]).astype(jnp.float32)*lbp_beta
 
 	bp_arrays = bp.init(evidence_updates = {FGvars: evidence_0*lambdas[0]})
 	bp_arrays, msgs_eps = run_with_diffs(bp_arrays)
 	map_state = infer.decode_map_states(bp.get_beliefs(bp_arrays))[FGvars]
-	
+
 	ms_d = map_s_distance(map_state, s)
 
 	lbp_stats = {}
 
 	lbp_stats["start_msgs_delta"] = msgs_eps[-1]
-	lbp_stats["start_distance"] =  ms_d
-	lbp_stats["start_lambda"] =  lambdas[0]
+	lbp_stats["start_distance"] = ms_d
+	lbp_stats["start_lambda"] = lambdas[0]
 
 	# jax.debug.print("Start messages delta: {x}", x = msgs_eps[-1])
 	# jax.debug.print("Start distance: {x}", x = ms_d)
@@ -180,7 +189,6 @@ def surrogate_LBP(bp,
 	# jax.debug.print("Init distance: {x}", x = ms_d)
 	# jax.debug.print("Init lambda: {x}",  x = lmbd)
 
-
 	#Reducing lambda until LBP diverges beyond the threshold
 	def run_bp_lmbd_decrease(x):
 		bp_arrays_old = x[0][0]
@@ -193,12 +201,14 @@ def surrogate_LBP(bp,
 		bp_arrays = replace(x[0][0], evidence = evidence_0.flatten()*lmbd) 
 
 		bp_arrays, msgs_eps = run_with_diffs(bp_arrays)
-		ms_d = map_s_distance(infer.decode_map_states(bp.get_beliefs(bp_arrays))[FGvars], s)
+
+		#get the map state and compute distance to reference
+		map_state = infer.decode_map_states(bp.get_beliefs(bp_arrays))[FGvars]
+		ms_d = map_s_distance(map_state, s)
 
 		# jax.debug.print("Adjusting: dmsgs = {x}, ms_d = {y}, lambda = {z}", x = msgs_eps[-1], y = ms_d, z = lmbd)
 
 		return (bp_arrays, msgs_eps[-1], ms_d, lmbd), (bp_arrays_old, m_delta_old, ms_d_old, lmbd_old), x[2] + 1
-	
 
 	final_lbp_res, pre_final_lbp_res, final_steps  = \
 		lax.while_loop(lambda x: jnp.logical_and(jnp.logical_and(x[0][1] < tolerance_m, x[0][2] < tolerance_d), x[0][3] > lambdas[1]), 
@@ -214,6 +224,10 @@ def surrogate_LBP(bp,
 	lbp_stats["final_msgs_delta"] = lbp_res[1]
 	lbp_stats["final_distance"] = lbp_res[2]
 	lbp_stats["final_lambda"] = lbp_res[3]
+	
+	#total number of steps in the lbp run
+	lbp_stats["total_steps"] = init_steps + final_steps + 1
+	lbp_stats["total_iterations"] = lbp_stats["total_steps"]*num_iters
 
 	# jax.debug.print("Final messages delta: {x}", x = lbp_res[1])
 	# jax.debug.print("Final distance: {x}", x = lbp_res[2])
@@ -223,3 +237,7 @@ def surrogate_LBP(bp,
 
 	#return the final beliefs of the LBP convergence and the adjusted starting lambda value of LBP
 	return beliefs, lbp_stats 
+
+
+if __name__ == "__main__":
+	pass

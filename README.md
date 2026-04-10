@@ -1,24 +1,21 @@
 # Reinforcement Learning Nonlocal Monte Carlo (RLNMC)
-A JAX implementation of RLNMC for the paper "Nonlocal Monte Carlo via Reinforcement Learning"
+A JAX implementation of algorithms (SA/NMC/RLNMC) for the paper ["Nonlocal Monte Carlo via Reinforcement Learning"](https://arxiv.org/abs/2508.10520).
 
 ## Installation
-Install dependencies from requirements.txt (may install the CPU version of JAX, modify for CUDA/TPU, if needed)
+Install dependencies from requirements.txt to your virtual environment (may install the CPU version of JAX, modify for CUDA, if available).
 ```
 pip install -r requirements.txt
 ```
-PS. The multi-device use of Gurobi can require a special license. Wandb requires an account.
+PS. The multi-device and/or large problem size use of Gurobi can require a special license. WandB logging requires an account.
 
-## Training
+## Running
+Modify files in `scripts` for your needs. For example, benchmarking of Uniform Random 4-SAT problems of size `N=500` from the paper is carried out as:
 ```
-python experiments/pretrain_nmc.py --config config_train_uf
+chmod +x scripts/bench/uf500.sh
+./scripts/bench/uf500.sh
 ```
-(uses one "device": a GPU recommended)
+(can use many "devices": GPUs recommended). Configuration files in `configs` are adjustable.
 
-## Benchmarking
-```
-python experiments/bench.py --config config_bench_uf
-```
-(can use many "devices": GPUs recommended)
 
 ## Citation
 The bibtex citation for the RLNMC paper is:

@@ -3,14 +3,17 @@
 .vscode/**
 *.dat
 *.txt
+*.cnf
 *.csv
 *.cxx
 *.pkl
 *.zip
 *.out
-experiments/data/**
-experiments/wandb/**
+*.err
 wandb/**
+data/**
+experiments/**
+scripts/**
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

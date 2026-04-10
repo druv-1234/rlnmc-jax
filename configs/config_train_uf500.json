@@ -1,0 +1,94 @@
+{
+	"problem_class": "uf4sat",
+
+	"n_devices": 1,
+	"seed": 123,
+	
+	"n_replicas": 16,
+	
+	"instances": [
+		[
+			1, 64
+		]
+	],
+	
+	"ground_states": [
+		[0]
+	],
+	
+	"setup": {
+		"pretrain_mode": "none",
+
+		"nmc": {
+			"threshold": 3.0,
+			"n_seeds": 1
+		},
+
+		"total_trials": 250,
+		"trials_per_log": 1,
+
+		"episodes_per_trial": 10,
+		"episodes_per_update": 1,
+
+		"lr_init": 5e-4,
+		"lr_final": 5e-5,
+
+		"update_epochs": 2,
+		"num_minibatches": 8,
+
+		"gamma": 0.75,
+		"gae_lambda": 0.9,
+
+		"clip_eps": 0.5,
+		"clip_eps_vf": 0.25,
+
+		"value_coef": 0.5,
+		"entropy_coef": 0.0005,
+		"all_same_coef": 1.0,
+
+		"max_grad_norm": 0.5
+	},
+
+	"load": {
+		"trained": false,
+		"type": "orbax", 
+		
+		"save_path": "experiments", 
+		"project_name": "train",
+		"run_id": "local",
+		
+		"name": "base"
+	},
+
+	"nmc_setup": {
+		"approximation": 0.0,
+		"track_stats": true,
+		"problem_mode": "wcnf",
+		
+		"coloring": true,
+
+		"energy_scale": 20.0,
+
+		"reward_scale": 0.002,
+
+		"numerical_eval_energy": false,
+
+		"use_lbp": false
+	},
+
+	"save":{
+		"log": {
+			"wandb": true
+		}, 
+	
+		"save_path": "experiments", 
+		"project_name": "train_uf500",
+		"run_id": "local", 
+		"name": "base",
+	
+		"save_data": {
+			"model_every_log": true,
+			"model_final": true
+		}
+	}
+}

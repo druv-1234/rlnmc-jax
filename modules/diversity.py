@@ -1,6 +1,6 @@
 import numpy as np
 import scipy.sparse as sp
-from typing import Tuple
+from typing import Tuple, List
 
 #we don't use the "weighted" feature of the solver yet
 from gurobi_optimods.mwis import maximum_weighted_independent_set
@@ -36,8 +36,7 @@ def build_graph_from_solution_set(set_of_solutions: set,
 	return coo, np.full((num_vertices, ), 1, dtype = np.int32)
 
 
-def get_diversity(set_of_solutions: set, 
-									R: np.ndarray) -> Tuple[float, list]:
+def get_diversity(set_of_solutions: set, R: List[float]) -> Tuple[float, list]:
 	"""
 	Construct a graph from solutions that is used to compute diversity
 

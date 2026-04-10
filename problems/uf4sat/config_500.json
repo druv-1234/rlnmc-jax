@@ -1,0 +1,44 @@
+{
+	"problem_setup": {
+		"N": 500,
+		"M": 4942
+	},
+
+	"SA": {
+		"episode_steps": 100,
+
+		"nsw_reset": 0,
+
+		"nmc_nsw_eq_phase": 500,
+
+		"beta_i": 3.0,
+		"beta_f": 8.0,
+
+		"beta_start": 3.0
+	},
+
+	"NMC": {
+		"episode_steps": 50,
+
+		"nsw_reset": 20000,
+		
+		"nmc_neq_cycles": 10,
+		"nmc_nsw_neq_phase": 30,
+		"nmc_nsw_eq_phase": 300,
+		"nmc_neq_beta": 0.5,
+
+		"beta_i": 3.0,
+		"beta_f": 8.0,
+		"beta_start": 5.0,
+
+		"lbp_beta": 5.0,
+		"lbp_tolerance_m": 0.001,
+		"lbp_tolerance_d": 1.0,
+		"lbp_num_iters": 100,
+		"lbp_lambdas": [
+			0.01,
+			0.001,
+			0.5
+		]
+	}
+}

@@ -1,0 +1,102 @@
+{
+	"problem_class": "uf4sat",
+	
+	"n_devices": 8,
+	"n_replicas": 256,
+
+	"seed": 123,
+
+	"instances": [
+		[
+			1, 64
+		],
+		[
+			65, 128
+		],
+		[
+			129, 192
+		],
+		[
+			193, 256
+		],
+		[
+			257, 320
+		],
+		[
+			321, 384
+		]
+	],
+
+	"ground_states": [
+		[0],
+		[0],
+		[0],
+		[0],
+		[0],
+		[0]
+	],
+
+	"magnetizations_bins": [
+		0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5
+	],
+
+	"diversity_r": [],
+
+	"algo_setup": {
+		"algo": "rlnmc",
+		"nmc": {
+			"threshold": 3.0,
+			"n_seeds": 4
+		}
+	},
+
+	"nmc_setup": {
+		"approximation": 4.0,
+		"track_stats": true,
+		"problem_mode": "wcnf",
+
+		"coloring": true,
+
+		"energy_scale": 80.0,
+
+		"numerical_eval_energy": false,
+
+		"use_lbp": false
+	},
+
+	"load": {
+		"trained": true,
+		"type": "json", 
+		
+		"save_path": "experiments", 
+		"project_name": "rlnmc_uf500_pretrained",
+		"run_id": "paper",
+		
+		"name": "best"
+	},
+
+	"save":{
+		"log": {
+			"sweeps_per_log": 1000, 
+
+			"percentiles": [20, 50, 80], 
+			"bootstrap": 1000, 
+			
+			"wandb": true
+		}, 
+	
+		"save_path": "experiments", 
+		"project_name": "rlnmc_uf2000_bench", 
+		"run_id": "local", 
+	
+		"save_data": {
+			"reset": "load",
+			"magnetizations": false,
+			"factor_graph": "load",
+			
+			"energy": true, 
+			"diversity": false, 
+			"name": "base"
+		}
+	}
+}
