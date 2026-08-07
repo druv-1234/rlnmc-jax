@@ -1,4 +1,4 @@
-jax==0.5.3
+jax[cuda12]==0.5.3
 numpy==1.26.4
 flax==0.10.5
 distrax==0.1.5
