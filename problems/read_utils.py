@@ -9,12 +9,54 @@ from modules.nmc_types import *
 
 from typing import List, Union
 
+def _assert_matching_arities(Jh_list: List[Jhdata]) -> None:
+	"""
+	Every instance in a batch must expose the same set of interaction orders.
+
+	Both stacking helpers take the order count from Jh_list[0] and loop over range() of
+	it. If instance 0 carries FEWER orders than a later instance, that instance's extra
+	groups are never read: they vanish from the batch with no error, and its energies are
+	then computed for a different Hamiltonian than the one on disk - which nothing
+	recomputes from scratch under numerical_eval_energy: false. The reverse ordering
+	fails loudly in jnp.stack on a shape mismatch, which is exactly what makes the silent
+	direction easy to miss.
+
+	Harmless while every instance was uniform k=4 wcnf; reachable now that read_ising_txt
+	returns whatever orders a file happens to contain.
+
+	What this does NOT restrict, and what is verified to work:
+	  - mixed orders WITHIN one instance (2-body + 3-body + bias on overlapping spins);
+	  - different NUMBERS of terms per order across instances in a batch - those are
+	    zero-padded to the batch maximum, and a zero-weight term contributes nothing to
+	    the energy. Checked: batching {5 two-body, 3 three-body} with {3 two-body,
+	    2 three-body} reproduces each instance's standalone energy exactly.
+
+	Only the SET of orders must agree: {2,3} with {2,3} is fine at any term counts, while
+	{2,3} with {2} - or {2,3} with {2,4} - raises.
+	"""
+	arities = [tuple(sorted(j.indices.shape[1] for j in Jh.J)) for Jh in Jh_list]
+
+	if len(set(arities)) != 1:
+		raise ValueError(
+			"All instances in a batch must contain the same SET of interaction orders, got "
+			f"{sorted(set(arities))} (one tuple per instance, listing its arities).\n"
+			"Differing term COUNTS are fine and are zero-padded; only a missing or extra "
+			"order is a problem.\n"
+			"Fix: split the batch so each run holds instances of matching arity - e.g. via "
+			"the `instances` ranges in the bench config - or run them one at a time. "
+			"Nothing is lost by splitting; this raises rather than silently dropping the "
+			"extra order, which is what it used to do."
+		)
+
+
 def pad_and_stack_Jh(Jh_list: List[Jhdata]) -> Jhdata:
 	"""
 	Pad the interaction matrices with zeros and stack them into a single Jhdata
 	"""
 	N = Jh_list[0].h.size
 	assert jnp.all(jnp.array([Jh.h.size == N for Jh in Jh_list])), "Not all problems are of equal size"
+
+	_assert_matching_arities(Jh_list)
 
 	k_order = len(Jh_list[0].J)
 
@@ -49,6 +91,8 @@ def pad_and_concatenate_Jh(Jh_list: List[Jhdata],
 	Pad the interaction matrices with zeros and cat them into a single Jhdata (not stacking)
 	"""
 	N = [Jh.h.size for Jh in Jh_list]
+
+	_assert_matching_arities(Jh_list)
 
 	p_order = len(Jh_list[0].J)
 
