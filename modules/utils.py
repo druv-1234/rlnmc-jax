@@ -186,8 +186,12 @@ def bench_wandb_logging(sweep: int,
     wandb_stats[f"energy/avg"] = \
       get_stats(None, jax.tree.map(lambda x: jnp.mean(x[step_i],  axis = 0), energy_stats["best_e"]), axis = 0)
       
+    #min over REPLICAS (axis 0), then averaged over instances by get_stats - which is what
+    #the name says. This was jnp.mean, i.e. byte-identical to energy/avg above, so the panel
+    #has never shown a minimum. Under a temperature ladder the min-over-rungs reduction is
+    #the correct one, which is why this matters more than it did.
     wandb_stats[f"energy/rep_min_inst_avg"] = \
-      get_stats(None, jax.tree.map(lambda x: jnp.mean(x[step_i], axis = 0), energy_stats["best_e"]), axis = 0)
+      get_stats(None, jax.tree.map(lambda x: jnp.min(x[step_i], axis = 0), energy_stats["best_e"]), axis = 0)
     wandb_stats[f"energy/inst_min_rep_avg"] = \
       get_stats(None, jax.tree.map(lambda x: jnp.min(x[step_i],  axis = 1), energy_stats["best_e"]), axis = 0)
 

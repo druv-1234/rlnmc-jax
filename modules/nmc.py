@@ -169,64 +169,113 @@ def get_energy(Jh: Jhdata,
 #####
 
 @partial(jax.jit, static_argnames=['problem_mode'])
+def propose(Jh: Jhdata,
+						s: jax.Array,
+						i: int,
+						r: float,
+						beta: float,
+						problem_mode: str) -> Tuple[jax.Array, jax.Array, jax.Array]:
+	"""
+	One spin update at index i: Gibbs heat-bath for pising, Metropolis for pubo/wcnf.
+
+	Returns (new value of s[i], whether it differs from the old one, de).
+	The caller decides what to do with that - all four kernels below share this.
+
+	pising uses the NATIVE P-BIT FORM: the spin is resampled from its own local field,
+		field = d(-E)/d(spin_i) = sum_{terms containing i} J*prod(other spins) + h_i
+		P(spin_i = +1) = sigmoid(2*beta*field)
+	which is exactly Nonlocal-Monte-Carlo/NMC/cnmc.py:87 and what p-bit hardware
+	physically computes. Jxs_de_pising already sums over every order group, so mixed
+	order (3-body + 2-body + bias) needs no special handling here.
+
+	Note this resamples rather than flips, so the spin may come out unchanged - hence
+	the explicit `changed` flag, which the callers need to keep the running energy in
+	step. cnmc.py has no such flag because it never tracks a running energy; it stores
+	every sweep and recomputes energy from scratch afterwards (cnmc.py:386).
+
+	wcnf has no local field at all - its energy is a count of unsatisfied clauses - so the
+	native form does not exist for it. wcnf and pubo are FROZEN at main's Metropolis rule;
+	see the comment at their return below for why that is deliberate.
+
+	Equivalence of the two forms requires diag(J) == 0, i.e. the field must not depend
+	on the spin being resampled. ising_txt_for_jax guarantees this: an "i i v" line can
+	only ever become a bias h[i], never a self-coupling.
+	"""
+
+	Jat_i = [Jsp(jat.data[i], jat.indices[i]) for jat in Jh.Jat]
+
+	if problem_mode == "pising":
+		field = Jxs_de_pising(Jat_i, s) + Jh.h[i]
+		de = field*(4*s[i] - 2)                       # == 2*field*spin_i
+
+		s_i = jax.nn.sigmoid(2*beta*field) > r
+		return s_i, jnp.logical_xor(s_i, s[i]), de
+
+	if problem_mode == "pubo":
+		de = (Jxs_de_pubo(Jat_i, s) + Jh.h[i])*(2*s[i] - 1)
+	else:
+		de = (Jxs_de_wcnf(Jat_i, s) + Jh.h[i])*(2*s[i] - 1)
+
+	#pubo and wcnf are FROZEN at the Metropolis rule main shipped (nmc.py:192/228/257/296
+	#there, as log_r < -de*beta with log_r = log(uniform); r is a plain uniform here, so
+	#the log moves inside). Heat-bath is an equally valid sampler of the same
+	#distribution, but it descends at a different rate per sweep, which would silently
+	#invalidate every hyperparameter tuned under Metropolis (beta_start, nsw_reset,
+	#nmc.threshold), the sf250 fork results, the experiments/ reset caches and the RLNMC
+	#checkpoints - none of which record which update rule produced them. The p-bit
+	#argument for the native Gibbs form above applies to pising only.
+	return jnp.logical_not(s[i]), jnp.log(r) < -de*beta, de
+
+
+@partial(jax.jit, static_argnames=['problem_mode'])
 def mc_step(Jh: Jhdata,
 						se: Seminokey,
 						i: int,
-						log_r: float,
+						r: float,
 						beta: float,
 						problem_mode: str) -> Tuple[Seminokey, jax.Array]:
 	"""
-	Monte Carlo Metropolis-Hastings step at index i (with energy tracking)
+	Monte Carlo Gibbs heat-bath step at index i (with energy tracking)
 	"""
 	s = se.s
 	e = se.e
 
-	if problem_mode == "pubo":
-		de = (Jxs_de_pubo([Jsp(jat.data[i], jat.indices[i]) for jat in Jh.Jat], s) + Jh.h[i])*(2*s[i] - 1)
-	elif problem_mode == "pising":
-		de = (Jxs_de_pising([Jsp(jat.data[i], jat.indices[i]) for jat in Jh.Jat], s) + Jh.h[i])*(4*s[i] - 2)
-	else:
-		de = (Jxs_de_wcnf([Jsp(jat.data[i], jat.indices[i]) for jat in Jh.Jat], s) + Jh.h[i])*(2*s[i] - 1)
-	
+	s_i, changed, de = propose(Jh, s, i, r, beta, problem_mode)
+
 	# stat: (x, de), where x = 1 is flipped, 0 is not flipped, -1 is nmc
-	s, e, stat = lax.cond(log_r < -de*beta, 
-												lambda: (s.at[i].set(jnp.logical_not(s[i])), e + de, 
-																 jnp.array([1, de])), 
-												lambda: (s, e, 
+	s, e, stat = lax.cond(changed,
+												lambda: (s.at[i].set(s_i), e + de,
+																 jnp.array([1, de])),
+												lambda: (s, e,
 																 jnp.array([0, 0], dtype = de.dtype)))
 
 	min_e, min_s = lax.cond(e < se.min_e,
-													lambda: (e, s), 
+													lambda: (e, s),
 													lambda: (se.min_e, se.min_s))
-	
+
 	return Seminokey(s, min_s, e, min_e), stat
 
 @partial(jax.jit, static_argnames=['problem_mode'])
 def mc_step_colored(Jh: Jhdata,
 									  s: jax.Array,
 									  i: int,
-									  log_r: float,
+									  r: float,
 									  beta: float,
 									  problem_mode: str) -> Tuple[jax.Array, jax.Array, jax.Array]:
 	"""
-	Monte Carlo Metropolis-Hastings step at index i
+	Monte Carlo Gibbs heat-bath step at index i
 	"""
 
-	if problem_mode == "pubo":
-		de = (Jxs_de_pubo([Jsp(jat.data[i], jat.indices[i]) for jat in Jh.Jat], s) + Jh.h[i])*(2*s[i] - 1)
-	elif problem_mode == "pising":
-		de = (Jxs_de_pising([Jsp(jat.data[i], jat.indices[i]) for jat in Jh.Jat], s) + Jh.h[i])*(4*s[i] - 2)
-	else:
-		de = (Jxs_de_wcnf([Jsp(jat.data[i], jat.indices[i]) for jat in Jh.Jat], s) + Jh.h[i])*(2*s[i] - 1)
+	s_i_new, changed, de = propose(Jh, s, i, r, beta, problem_mode)
 
 	#track the negative energy change (even if not flipped)
-	min_s_i, neg_de = lax.cond(de < 0, 
-														 lambda: (jnp.logical_not(s[i]), de), 
+	min_s_i, neg_de = lax.cond(de < 0,
+														 lambda: (jnp.logical_not(s[i]), de),
 														 lambda: (s[i], jnp.array(0, dtype = de.dtype)))
 
 	# stat: (x, de), where x = 1 is flipped, 0 is not flipped, -1 is ncm
-	s_i, stat = lax.cond(log_r < -de*beta, 
-											lambda: (jnp.logical_not(s[i]), jnp.array([1, de, neg_de])), 
+	s_i, stat = lax.cond(changed,
+											lambda: (s_i_new, jnp.array([1, de, neg_de])),
 											lambda: (s[i], jnp.array([0, 0, neg_de])))
 
 	return s_i, min_s_i, stat
@@ -237,33 +286,26 @@ def c_step(Jh: Jhdata,
 					 se: Seminokey,
 					 is_c: bool,
 					 i: int,
-					 log_r: float,
+					 r: float,
 					 beta: float,
 					 problem_mode: str) -> Tuple[Seminokey, jax.Array]:
 	"""
-	Monte Carlo Metropolis-Hastings cluster step at index i
+	Monte Carlo Gibbs heat-bath cluster step at index i
 	"""
 	s = se.s
 
-	if problem_mode == "pubo":
-		de = (Jxs_de_pubo([Jsp(jat.data[i], jat.indices[i]) for jat in Jh.Jat], s) + Jh.h[i])*(2*s[i] - 1)
+	s_i, changed, de = propose(Jh, s, i, r, beta, problem_mode)
 
-	elif problem_mode == "pising":
-		de = (Jxs_de_pising([Jsp(jat.data[i], jat.indices[i]) for jat in Jh.Jat], s) + Jh.h[i])*(4*s[i] - 2)
-
-	else:
-		de = (Jxs_de_wcnf([Jsp(jat.data[i], jat.indices[i]) for jat in Jh.Jat], s) + Jh.h[i])*(2*s[i] - 1)
-	
-	s, e, stat = lax.cond(jnp.logical_and(is_c, log_r < -de*beta), 
-												lambda: (s.at[i].set(jnp.logical_not(s[i])), se.e + de, 
-																 jnp.array([1, de])), 
-												lambda: (s, se.e, 
+	s, e, stat = lax.cond(jnp.logical_and(is_c, changed),
+												lambda: (s.at[i].set(s_i), se.e + de,
+																 jnp.array([1, de])),
+												lambda: (s, se.e,
 																 jnp.array([0 - jnp.logical_not(is_c), 0], dtype = de.dtype)))
 
 	min_e, min_s = lax.cond(e < se.min_e,
-												 lambda: (e, s), 
-												 lambda: (se.min_e, se.min_s))																 
-	
+												 lambda: (e, s),
+												 lambda: (se.min_e, se.min_s))
+
 	return Seminokey(s, min_s, e, min_e), stat
 
 
@@ -272,29 +314,22 @@ def c_step_colored(Jh: Jhdata,
 									 s: jax.Array,
 									 is_c: bool,
 									 i: int,
-									 log_r: float,
+									 r: float,
 									 beta: float,
 									 problem_mode: str) -> Tuple[jax.Array, jax.Array, jax.Array]:
 	"""
-	Colored Monte Carlo Metropolis-Hastings cluster step at index i
+	Colored Monte Carlo Gibbs heat-bath cluster step at index i
 	"""
 
-	if problem_mode == "pubo":
-		de = (Jxs_de_pubo([Jsp(jat.data[i], jat.indices[i]) for jat in Jh.Jat], s) + Jh.h[i])*(2*s[i] - 1)
-
-	elif problem_mode == "pising":
-		de = (Jxs_de_pising([Jsp(jat.data[i], jat.indices[i]) for jat in Jh.Jat], s) + Jh.h[i])*(4*s[i] - 2)
-
-	else:
-		de = (Jxs_de_wcnf([Jsp(jat.data[i], jat.indices[i]) for jat in Jh.Jat], s) + Jh.h[i])*(2*s[i] - 1)
+	s_i_new, changed, de = propose(Jh, s, i, r, beta, problem_mode)
 
 	#track the negative energy change (even if not flipped)
-	min_s_i, neg_de = lax.cond(jnp.logical_and(is_c, de < 0), 
-														 lambda: (jnp.logical_not(s[i]), de), 
+	min_s_i, neg_de = lax.cond(jnp.logical_and(is_c, de < 0),
+														 lambda: (jnp.logical_not(s[i]), de),
 														 lambda: (s[i], jnp.array(0, dtype = de.dtype)))
 
-	s_i, stat = lax.cond(jnp.logical_and(is_c, log_r < -de*beta), 
-											 lambda: (jnp.logical_not(s[i]), jnp.array([1, de, neg_de])), 
+	s_i, stat = lax.cond(jnp.logical_and(is_c, changed),
+											 lambda: (s_i_new, jnp.array([1, de, neg_de])),
 											 lambda: (s[i], jnp.array([0 - jnp.logical_not(is_c), 0, neg_de], dtype = de.dtype)))
 
 	return s_i, min_s_i, stat
@@ -336,8 +371,8 @@ def mcmc_sampling(Jh: Jhdata,
 		perm = jax.random.permutation(subkey1, N) 				 #generate permutation of the sweep
 
 		#generate random numbers for the sweep all at once
-		mc_r = jnp.log(jax.random.uniform(subkey2, (N,)))
-		
+		mc_r = jax.random.uniform(subkey2, (N,))
+
 		se = Seminokey(seminkey.s, seminkey.min_s, seminkey.e, seminkey.min_e)
 
 		se, stats = lax.scan(mc_step_call, se, xs = (perm, mc_r)) #type: ignore
@@ -457,8 +492,8 @@ def mcmc_sampling_colored(
 		perm = jax.random.permutation(subkey1, n_colors)
 
 		#generate random numbers for the sweep all at once
-		mc_r = jnp.log(jax.random.uniform(subkey2, (N,)))
-		
+		mc_r = jax.random.uniform(subkey2, (N,))
+
 		(_, s, min_s, carry_de, carry_min_de), stats = \
 			lax.scan(step_call_colored, 
 							 (mc_r, 
@@ -534,7 +569,11 @@ def nmc_sampling(
 		i = xs[1]
 		mcr = xs[2]
 
-		#beta == 0.0 means the full rejection-free flip of the cluster
+		#beta == 0.0 marks a spin OUTSIDE the active set: is_cluster is False there, and
+		#c_step's flip branch is gated on `logical_and(is_c, changed)`, so such a spin is
+		#never flipped. It is SKIPPED, not "rejection-free flipped" and not rejected - the
+		#earlier wording here said the opposite of what the code does. `propose` still runs
+		#for it, so the cost is unchanged; only the update is suppressed.
 		return c_step(Jh, se, is_cluster, i, mcr, beta, problem_mode)
 
 
@@ -552,7 +591,7 @@ def nmc_sampling(
 
 		key, subkey1, subkey2 = jax.random.split(seminkey.key, 3)
 
-		mc_r = jnp.log(jax.random.uniform(subkey1, (N,)))
+		mc_r = jax.random.uniform(subkey1, (N,))
 
 		#Perform the cluster move sweep
 		se, stats = \
@@ -705,7 +744,7 @@ def nmc_sampling_colored(
 
 		key, subkey1, subkey2 = jax.random.split(seminkey.key, 3)
 
-		mc_r = jnp.log(jax.random.uniform(subkey1, (N,)))
+		mc_r = jax.random.uniform(subkey1, (N,))
 
 		#Perform the cluster move sweep
 		(_, s, min_s, carry_de, carry_min_de, _), stats = \
